@@ -58,6 +58,24 @@ def download_video(url, format_id, save_path, window):
     except Exception as e:
         window.post_event("--DOWNLOAD-ERROR--", {"error": str(e)})
 
+def download_video_list(url, format_id, save_path, window):
+    """バックグラウンドで動画情報を取得しダウンロードする関数"""
+    try:
+        window.post_event("--DOWNLOAD-START--", None)
+        ydl_opts = {
+            'format': format_type,
+            'quiet': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            if info_dict:
+                # Get the best format ID based on selection
+                format_id = info_dict.get('format_id')
+                download_video(url, format_id, save_path, window)
+        window.post_event("--DOWNLOAD-COMPLETE--", None)
+    except Exception as e:
+        window.post_event("--DOWNLOAD-ERROR--", {"error": str(e)})
+
 test_layout = [
     [eg.Text("動画とかダウンローダー")],]
 
@@ -100,18 +118,7 @@ with eg.Window("Hello App", layout) as window:
                     # Determine format based on radio button selection
                     format_type = "bestaudio" if values["audio"] else "bestvideo+bestaudio/best"
                     window["status"].update(f"URLリストからダウンロード中: {url}...")
-                    
-                    # Get info and best format ID for this URL
-                    ydl_opts = {
-                        'format': format_type,
-                        'quiet': True,
-                    }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info_dict = ydl.extract_info(url, download=False)
-                        if info_dict:
-                            # Get the best format ID based on selection
-                            format_id = info_dict.get('format_id')
-                            threading.Thread(target=download_video, args=(url, format_id, save_path, window), daemon=True).start()
+                    threading.Thread(target=download_video_list, args=(url, format_type, save_path, window), daemon=True).start()
             if not url:
                 window["status"].update("URLを入力してください")
                 continue
@@ -136,10 +143,47 @@ with eg.Window("Hello App", layout) as window:
         elif event == "--DOWNLOAD-START--":
             window["status"].update("ダウンロード開始...")
         elif event == "--DOWNLOAD-PROGRESS--":
-            progress_data = values
-            if 'downloaded_bytes' in progress_data and 'total_bytes' in progress_data:
-                percentage = progress_data['downloaded_bytes'] / progress_data['total_bytes'] * 100
-                window["status"].update(f"ダウンロード中... {percentage:.1f}%")
+            try:
+                # イベントデータを適切に取得
+                progress_data = values.get(event)
+                if not progress_data and isinstance(values, dict):
+                    # 直接valuesがデータである可能性を確認
+                    progress_data = values
+                    
+                # データ構造を検証
+                if progress_data and isinstance(progress_data, dict):
+                    if 'downloaded_bytes' in progress_data and 'total_bytes' in progress_data:
+                        try:
+                            # 念のため型変換してエラーを防止
+                            downloaded = float(progress_data['downloaded_bytes'])
+                            total = float(progress_data['total_bytes'])
+                            if total > 0:  # ゼロ除算を防止
+                                percentage = (downloaded / total) * 100
+                                window["status"].update(f"ダウンロード中... {percentage:.1f}%")
+                            else:
+                                window["status"].update("ダウンロード中...")
+                        except (TypeError, ValueError) as e:
+                            window["status"].update(f"ダウンロード中... (進捗計算エラー: {e})")
+                    elif 'downloaded_bytes' in progress_data and 'total_bytes_estimate' in progress_data:
+                        # 代替方法で計算
+                        try:
+                            downloaded = float(progress_data['downloaded_bytes'])
+                            total = float(progress_data['total_bytes_estimate'])
+                            if total > 0:
+                                percentage = (downloaded / total) * 100
+                                window["status"].update(f"ダウンロード中... {percentage:.1f}% (推定)")
+                            else:
+                                window["status"].update("ダウンロード中...")
+                        except (TypeError, ValueError):
+                            window["status"].update("ダウンロード中... (進捗不明)")
+                    else:
+                        # bytes情報がない場合
+                        window["status"].update("ダウンロード中...")
+                else:
+                    window["status"].update("ダウンロード中...")
+            except Exception as e:
+                # 何らかの予期せぬエラーが発生した場合
+                window["status"].update(f"ダウンロード中... (エラー: {str(e)})")
         elif event == "--DOWNLOAD-COMPLETE--":
             window["status"].update("ダウンロード完了!")
         elif event == "--DOWNLOAD-ERROR--":
