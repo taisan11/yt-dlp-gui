@@ -81,12 +81,14 @@ test_layout = [
 
 layout = [
     [eg.Text("動画とかダウンローダー",font=("Helvetica", 20))],
-    [eg.Text("普通にダウンロード!!",font=("Helvetica", 13))],
+    [eg.Text("普通にダウンロード!!",font=("Helvetica", 13,"bold"))],
     [eg.Text("URL:"),eg.InputText("", key="url"), eg.Button("読み込み")],
-    [eg.Combo(values=[], key="list", size=(40, 10))],
-    [eg.Text("連続ダウンロード!!",font=("Helvetica", 13))],
+    [eg.Combo(values=[], key="list", size=(40, 10,"bold"))],
+    [eg.Text("連続ダウンロード!!",font=("Helvetica", 13,"bold"))],
     [eg.InputText("", key="urllist"),eg.FileBrowse("URLリスト")],
     [eg.Radio("video","AV",default=True), eg.Radio("audio","AV")],
+    [eg.Text("総合操作盤!!",font=("Helvetica", 13,"bold"))],
+    [eg.Text("出力形式:"),eg.InputText("",key="fileformat")],
     [eg.InputText(key="folder"),eg.FolderBrowse("保存先"), eg.Button("保存")],
     [eg.Text("情報!!")],
     [eg.Text("", key="title")],
