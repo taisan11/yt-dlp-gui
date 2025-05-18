@@ -1,0 +1,10 @@
+[project]
+name = "yt-dlp-gui"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "tkeasygui>=1.0.37",
+    "yt-dlp>=2025.4.30",
+]
