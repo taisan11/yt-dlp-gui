@@ -3,6 +3,7 @@ import TkEasyGUI as eg
 import os
 import threading
 from pathlib import Path
+import signal
 
 def get_download_folder():
     home = Path.home()
@@ -22,6 +23,12 @@ def fetch_video_info(url, window):
             'quiet': True,
             'outtmpl': '%(title)s.%(ext)s',
         }
+        
+        # Cookieファイルが設定されている場合は追加
+        cookie_file = window.read()["cookie_list"]
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+            
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
             if info_dict:
@@ -43,60 +50,136 @@ def fetch_video_info(url, window):
     except Exception as e:
         window.post_event("--VIDEO-INFO-ERROR--", str(e))
 
-def download_video(url, format_id, save_path, window):
+def download_video(url, format_id, save_path, window, is_single_mode=True):
     """バックグラウンドで動画をダウンロードする関数"""
     try:
         window.post_event("--DOWNLOAD-START--", None)
-        ydl_opts = {
-            'format': format_id,
-            'outtmpl': f"{save_path}/%(title)s.%(ext)s",
-            'progress_hooks': [lambda d: window.post_event("--DOWNLOAD-PROGRESS--", d) if d['status'] == 'downloading' else None],
-        }
+        if is_single_mode:
+            # 単一モード：指定されたファイルパスに保存
+            ydl_opts = {
+                'format': format_id,
+                'outtmpl': save_path,
+                'progress_hooks': [lambda d: window.post_event("--DOWNLOAD-PROGRESS--", d) if d['status'] == 'downloading' else None],
+            }
+        else:
+            # 連続モード：フォルダ内にファイル名自動生成で保存
+            ydl_opts = {
+                'format': format_id,
+                'outtmpl': f"{save_path}/%(title)s.%(ext)s",
+                'progress_hooks': [lambda d: window.post_event("--DOWNLOAD-PROGRESS--", d) if d['status'] == 'downloading' else None],
+            }
+            
+        # Cookieファイルが設定されている場合は追加
+        cookie_file = window.read()["cookie_list"]
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+            
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         window.post_event("--DOWNLOAD-COMPLETE--", None)
     except Exception as e:
         window.post_event("--DOWNLOAD-ERROR--", {"error": str(e)})
 
-def download_video_list(url, format_id, save_path, window):
-    """バックグラウンドで動画情報を取得しダウンロードする関数"""
+def download_url_list(url_list_path, format_type, save_path, window):
+    """URLリストファイルを非同期でダウンロードする関数"""
     try:
-        window.post_event("--DOWNLOAD-START--", None)
+        with open(url_list_path, "r", encoding="utf-8") as f:
+            urls = f.readlines()
+        
+        total_urls = len([url.strip() for url in urls if url.strip()])
+        window.post_event("--URL-LIST-START--", {"total": total_urls})
+        
+        for i, url in enumerate(urls, 1):
+            url = url.strip()
+            if not url:
+                continue
+            
+            window.post_event("--URL-LIST-PROGRESS--", {"current": i, "total": total_urls, "url": url[:50]})
+            
+            try:
+                # 各URLを個別にダウンロード
+                ydl_opts = {
+                    'format': format_type,
+                    'outtmpl': f"{save_path}/%(title)s.%(ext)s",
+                    'quiet': True,
+                }
+                
+                # Cookieファイルが設定されている場合は追加
+                cookie_file = window.read()["cookie_list"]
+                if cookie_file and os.path.exists(cookie_file):
+                    ydl_opts['cookiefile'] = cookie_file
+                    
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                    
+            except Exception as e:
+                window.post_event("--URL-LIST-ERROR--", {"current": i, "total": total_urls, "error": str(e)})
+                continue
+        
+        window.post_event("--URL-LIST-COMPLETE--", {"total": total_urls})
+        
+    except Exception as e:
+        window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
+
+def download_playlist_simple(url, format_type, save_path, window):
+    """連続ダウンロード用のシンプルなプレイリストダウンロード関数"""
+    try:
         ydl_opts = {
             'format': format_type,
-            'quiet': True,
+            'outtmpl': f"{save_path}/%(playlist_index)s - %(title)s.%(ext)s" if "playlist" in url or "channel" in url else f"{save_path}/%(title)s.%(ext)s",
+            'progress_hooks': [lambda d: window.post_event("--RENZOKU-PROGRESS--", d) if d['status'] == 'downloading' else None],
         }
+        
+        # Cookieファイルが設定されている場合は追加
+        cookie_file = window.read()["cookie_list"]
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+            
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            if info_dict:
-                # Get the best format ID based on selection
-                format_id = info_dict.get('format_id')
-                download_video(url, format_id, save_path, window)
-        window.post_event("--DOWNLOAD-COMPLETE--", None)
+            ydl.download([url])
+        window.post_event("--RENZOKU-DOWNLOAD-COMPLETE--", None)
     except Exception as e:
-        window.post_event("--DOWNLOAD-ERROR--", {"error": str(e)})
+        window.post_event("--RENZOKU-DOWNLOAD-ERROR--", {"error": str(e)})
 
-test_layout = [
-    [eg.Text("動画とかダウンローダー")],]
+layout_renzoku = [
+    [eg.Text("連続ダウンロード!!",font=("Helvetica", 13,"bold"))],
+    [eg.Text("URLリストファイルまたはプレイリストURL:"),eg.InputText("", key="url_input"),eg.FileBrowse("URLリスト")],
+    [eg.Text("出力形式:"),eg.Radio("video","AV",default=True,key="renzoku_video"), eg.Radio("audio","AV",key="renzoku_audio")],
+    [eg.Text("保存フォルダ:"),eg.InputText(key="renzoku_folder"),eg.FolderBrowse("フォルダ選択")],
+    [eg.Button("連続ダウンロード開始")],
+    [eg.Text("", key="renzoku_status")],
+]
 
-layout = [
+layout_main = [
     [eg.Text("動画とかダウンローダー",font=("Helvetica", 20))],
-    [eg.Text("普通にダウンロード!!",font=("Helvetica", 13,"bold"))],
+    [eg.Text("単一動画ダウンロード!!",font=("Helvetica", 13,"bold"))],
     [eg.Text("URL:"),eg.InputText("", key="url"), eg.Button("読み込み")],
     [eg.Combo(values=[], key="list", size=(40, 10,"bold"))],
-    [eg.Text("連続ダウンロード!!",font=("Helvetica", 13,"bold"))],
-    [eg.InputText("", key="urllist"),eg.FileBrowse("URLリスト")],
-    [eg.Radio("video","AV",default=True), eg.Radio("audio","AV")],
-    [eg.Text("総合操作盤!!",font=("Helvetica", 13,"bold"))],
-    [eg.Text("出力形式:"),eg.InputText("",key="fileformat")],
-    [eg.InputText(key="folder"),eg.FolderBrowse("保存先"), eg.Button("保存")],
-    [eg.Text("情報!!")],
+    [eg.Text("保存設定",font=("Helvetica", 13,"bold"))],
+    [eg.Text("保存先:"),eg.InputText(key="save_path"),eg.FileSaveAs("ファイル保存先")],
+    [eg.Button("単一ダウンロード開始")],
+    [eg.Text("情報")],
     [eg.Text("", key="title")],
     [eg.Text("", key="status")]
 ]
 
+layout_settings = [
+    [eg.Text("設定", font=("Helvetica", 20))],
+    [eg.Text("CookieList:"), eg.InputText("", key="cookie_list"), eg.FileBrowse("選択")],
+]
+
+layout = [
+    [eg.TabGroup(
+        [[
+            eg.Tab("一般", layout_main),
+            eg.Tab("連続", layout_renzoku),
+            eg.Tab("設定", layout_settings)
+        ]]
+    )],
+]
+
 # create a window
-with eg.Window("Hello App", layout) as window:
+with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
     # event loop
     for event, values in window.event_iter():
         if event == eg.WIN_CLOSED:
@@ -106,21 +189,8 @@ with eg.Window("Hello App", layout) as window:
             if url:
                 window["status"].update("情報取得中...")
                 threading.Thread(target=fetch_video_info, args=(url, window), daemon=True).start()
-        elif event == "保存":
+        elif event == "単一ダウンロード開始":
             url = values["url"]
-            URLlist = values["urllist"]
-            if URLlist:
-                with open(URLlist, "r") as f:
-                    urls = f.readlines()
-                for url in urls:
-                    url = url.strip()
-                    if not url:
-                        continue
-                    save_path = values.get("folder") or get_download_folder()
-                    # Determine format based on radio button selection
-                    format_type = "bestaudio" if values["audio"] else "bestvideo+bestaudio/best"
-                    window["status"].update(f"URLリストからダウンロード中: {url}...")
-                    threading.Thread(target=download_video_list, args=(url, format_type, save_path, window), daemon=True).start()
             if not url:
                 window["status"].update("URLを入力してください")
                 continue
@@ -130,18 +200,92 @@ with eg.Window("Hello App", layout) as window:
                 window["status"].update("フォーマットを選択してください")
                 continue
                 
+            # ファイル保存先の確認
+            save_path = values.get("save_path")
+            if not save_path:
+                window["status"].update("保存先を選択してください")
+                continue
+                
             format_id = selected_format.split(" - ")[0]
-            save_path = values.get("folder") or get_download_folder()
             
             window["status"].update("ダウンロード開始...")
-            threading.Thread(target=download_video, args=(url, format_id, save_path, window), daemon=True).start()
+            threading.Thread(target=download_video, args=(url, format_id, save_path, window, True), daemon=True).start()
+        elif event == "--RENZOKU-PROGRESS--":
+            try:
+                progress_data = values.get(event)
+                if not progress_data and isinstance(values, dict):
+                    progress_data = values
+                    
+                if progress_data and isinstance(progress_data, dict):
+                    if 'downloaded_bytes' in progress_data and 'total_bytes' in progress_data:
+                        try:
+                            downloaded = float(progress_data['downloaded_bytes'])
+                            total = float(progress_data['total_bytes'])
+                            if total > 0:
+                                percentage = (downloaded / total) * 100
+                                filename = progress_data.get('filename', '')
+                                if filename:
+                                    basename = os.path.basename(filename)
+                                    window["renzoku_status"].update(f"ダウンロード中: {basename} - {percentage:.1f}%")
+                                else:
+                                    window["renzoku_status"].update(f"ダウンロード中... {percentage:.1f}%")
+                            else:
+                                window["renzoku_status"].update("ダウンロード中...")
+                        except (TypeError, ValueError):
+                            window["renzoku_status"].update("ダウンロード中...")
+                    else:
+                        window["renzoku_status"].update("ダウンロード中...")
+                else:
+                    window["renzoku_status"].update("ダウンロード中...")
+            except Exception as e:
+                window["renzoku_status"].update(f"ダウンロード中... (エラー: {str(e)})")
+        elif event == "--RENZOKU-DOWNLOAD-COMPLETE--":
+            window["renzoku_status"].update("ダウンロード完了!")
+        elif event == "--RENZOKU-DOWNLOAD-ERROR--":
+            window["renzoku_status"].update(f"ダウンロードエラー: {values['error']}")
+        elif event == "連続ダウンロード開始":
+            url_input = values["url_input"]
+            
+            if not url_input:
+                window["renzoku_status"].update("URLリストファイルまたはプレイリストURLを入力してください")
+                continue
+                
+            save_folder = values.get("renzoku_folder") or get_download_folder()
+            format_type = "bestaudio" if values.get("renzoku_audio") else "bestvideo+bestaudio/best"
+            
+            # 入力がファイルパスかURLかを判定
+            if os.path.exists(url_input):
+                # ファイルパスの場合：URLリストファイルとして処理（非同期）
+                window["renzoku_status"].update("URLリスト読み込み中...")
+                threading.Thread(target=download_url_list, args=(url_input, format_type, save_folder, window), daemon=True).start()
+            else:
+                # URLの場合：プレイリストURLとして処理
+                window["renzoku_status"].update("ダウンロード開始...")
+                threading.Thread(target=download_playlist_simple, args=(url_input, format_type, save_folder, window), daemon=True).start()
+        elif event == "--URL-LIST-START--":
+            window["renzoku_status"].update(f"連続ダウンロード開始 ({values['total']}件)")
+        elif event == "--URL-LIST-PROGRESS--":
+            window["renzoku_status"].update(f"ダウンロード中 ({values['current']}/{values['total']}): {values['url']}...")
+        elif event == "--URL-LIST-ERROR--":
+            window["renzoku_status"].update(f"エラー ({values['current']}/{values['total']}): {values['error']}")
+        elif event == "--URL-LIST-COMPLETE--":
+            window["renzoku_status"].update(f"連続ダウンロード完了 ({values['total']}件)")
+        elif event == "--URL-LIST-FILE-ERROR--":
+            window["renzoku_status"].update(f"URLリスト読み込みエラー: {values['error']}")
         elif event == "--VIDEO-INFO-READY--":
             window["title"].update(values["title"])
             window["list"].update(values=values["formats"])
             window["status"].update("情報取得完了")
+            # 保存先フィールドにタイトルを含めたファイル名を自動提案
+            if values.get("title"):
+                # 不正な文字を除去してファイル名として使用可能にする
+                safe_title = "".join(c for c in values["title"] if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+                download_folder = get_download_folder()
+                suggested_path = f"{download_folder}/{safe_title}.%(ext)s"
+                window["save_path"].update(suggested_path)
         elif event == "--VIDEO-INFO-ERROR--":
             window["title"].update("エラー")
-            window["status"].update(f"情報取得エラー: {values['error']}")
+            window["status"].update(f"情報取得エラー: {values}")
         elif event == "--DOWNLOAD-START--":
             window["status"].update("ダウンロード開始...")
         elif event == "--DOWNLOAD-PROGRESS--":
