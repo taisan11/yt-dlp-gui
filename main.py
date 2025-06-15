@@ -87,14 +87,18 @@ def download_url_list(url_list_path, format_type, save_path, window):
             urls = f.readlines()
         
         total_urls = len([url.strip() for url in urls if url.strip()])
-        window.post_event("--URL-LIST-START--", {"total": total_urls})
+        
+        # イベントをメインスレッドに送信
+        window.after(0, lambda: update_ui_start(window, total_urls))
         
         for i, url in enumerate(urls, 1):
             url = url.strip()
             if not url:
                 continue
             
-            window.post_event("--URL-LIST-PROGRESS--", {"current": i, "total": total_urls, "url": url[:50]})
+            # イベントをメインスレッドに送信
+            window.after(0, lambda w=window, curr=i, tot=total_urls, u=url: 
+                update_ui_progress(w, curr, tot, u))
             
             try:
                 # 各URLを個別にダウンロード
@@ -105,7 +109,12 @@ def download_url_list(url_list_path, format_type, save_path, window):
                 }
                 
                 # Cookieファイルが設定されている場合は追加
-                cookie_file = window.read()["cookie_list"]
+                cookie_file = None
+                try:
+                    cookie_file = window.read()["cookie_list"]
+                except:
+                    pass
+                    
                 if cookie_file and os.path.exists(cookie_file):
                     ydl_opts['cookiefile'] = cookie_file
                     
@@ -113,13 +122,36 @@ def download_url_list(url_list_path, format_type, save_path, window):
                     ydl.download([url])
                     
             except Exception as e:
-                window.post_event("--URL-LIST-ERROR--", {"current": i, "total": total_urls, "error": str(e)})
+                # エラーメッセージをメインスレッドに送信
+                error_msg = str(e)
+                window.after(0, lambda w=window, curr=i, tot=total_urls, err=error_msg: 
+                    update_ui_error(w, curr, tot, err))
                 continue
         
-        window.post_event("--URL-LIST-COMPLETE--", {"total": total_urls})
+        # 完了メッセージをメインスレッドに送信
+        window.after(0, lambda w=window, tot=total_urls: update_ui_complete(w, tot))
         
     except Exception as e:
-        window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
+        # ファイルエラーメッセージをメインスレッドに送信
+        error_msg = str(e)
+        window.after(0, lambda w=window, err=error_msg: update_ui_file_error(w, err))
+
+# メインスレッドで実行される関数群（UI更新用）
+def update_ui_start(window, total_urls):
+    window.post_event("--URL-LIST-START--", {"total": total_urls})
+
+def update_ui_progress(window, current, total, url):
+    window.post_event("--URL-LIST-PROGRESS--", {"current": current, "total": total, "url": url[:50]})
+
+def update_ui_error(window, current, total, error):
+    window.post_event("--URL-LIST-ERROR--", {"current": current, "total": total, "error": error})
+
+def update_ui_complete(window, total):
+    window.post_event("--URL-LIST-COMPLETE--", {"total": total})
+
+def update_ui_file_error(window, error):
+    window.post_event("--URL-LIST-FILE-ERROR--", {"error": error})
+
 
 def download_playlist_simple(url, format_type, save_path, window):
     """連続ダウンロード用のシンプルなプレイリストダウンロード関数"""
@@ -127,19 +159,33 @@ def download_playlist_simple(url, format_type, save_path, window):
         ydl_opts = {
             'format': format_type,
             'outtmpl': f"{save_path}/%(playlist_index)s - %(title)s.%(ext)s" if "playlist" in url or "channel" in url else f"{save_path}/%(title)s.%(ext)s",
-            'progress_hooks': [lambda d: window.post_event("--RENZOKU-PROGRESS--", d) if d['status'] == 'downloading' else None],
+            'progress_hooks': [
+                lambda d: window.after(0, lambda: renzoku_progress_hook(window, d)) 
+                if d['status'] == 'downloading' else None
+            ],
         }
         
         # Cookieファイルが設定されている場合は追加
-        cookie_file = window.read()["cookie_list"]
+        cookie_file = None
+        try:
+            cookie_file = window.read()["cookie_list"]
+        except:
+            pass
+            
         if cookie_file and os.path.exists(cookie_file):
             ydl_opts['cookiefile'] = cookie_file
             
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        window.post_event("--RENZOKU-DOWNLOAD-COMPLETE--", None)
+        
+        window.after(0, lambda: window.post_event("--RENZOKU-DOWNLOAD-COMPLETE--", None))
     except Exception as e:
-        window.post_event("--RENZOKU-DOWNLOAD-ERROR--", {"error": str(e)})
+        error_msg = str(e)
+        window.after(0, lambda: window.post_event("--RENZOKU-DOWNLOAD-ERROR--", {"error": error_msg}))
+
+# プログレスフックをメインスレッドで実行するヘルパー関数
+def renzoku_progress_hook(window, d):
+    window.post_event("--RENZOKU-PROGRESS--", d)
 
 layout_renzoku = [
     [eg.Text("連続ダウンロード!!",font=("Helvetica", 13,"bold"))],
