@@ -230,6 +230,9 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
     for event, values in window.event_iter():
         if event == eg.WIN_CLOSED:
             break
+        ####################
+        ## 単一動画ダウンロード処理
+        ####################
         elif event == "読み込み":
             url = values["url"]
             if url:
@@ -256,6 +259,9 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
             
             window["status"].update("ダウンロード開始...")
             threading.Thread(target=download_video, args=(url, format_id, save_path, window, True), daemon=True).start()
+        ####################
+        ## 連続動画ダウンロード処理
+        ####################
         elif event == "--RENZOKU-PROGRESS--":
             try:
                 progress_data = values.get(event)
