@@ -64,11 +64,59 @@ def fetch_video_info(url, window):
                         size_mb = f['filesize'] / (1024 * 1024)
                         format_str += f"{size_mb:.1f}MB "
                     formats.append(format_str.strip())
-                window.post_event("--VIDEO-INFO-READY--", {"title": title, "formats": formats, "is_live": is_live})
+                
+                if is_live:
+                    # 生配信の場合は専用タブへの移動を促す
+                    window.post_event("--VIDEO-INFO-LIVE--", {"title": title, "url": url})
+                else:
+                    # 通常の動画の場合
+                    window.post_event("--VIDEO-INFO-READY--", {"title": title, "formats": formats})
             else:
                 window.post_event("--VIDEO-INFO-ERROR--", "Invalid URL or video not found")
     except Exception as e:
         window.post_event("--VIDEO-INFO-ERROR--", str(e))
+
+def fetch_live_info(url, window):
+    """バックグラウンドで生配信情報を取得する関数"""
+    try:
+        window["live_title"].update("読み込み中...")
+        ydl_opts = {
+            'format': 'bestvideo+bestaudio/best',
+            'noplaylist': True,
+            'quiet': True,
+            'outtmpl': '%(title)s.%(ext)s',
+        }
+        
+        # Cookieファイルが設定されている場合は追加
+        cookie_file = window.read()["cookie_list"]
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+            
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            if info_dict:
+                title = info_dict.get('title', None)
+                is_live = info_dict.get('is_live', False)
+                formats = []
+                for f in info_dict['formats']:
+                    format_str = f"{f['format_id']} - "
+                    if 'resolution' in f and f['resolution']:
+                        format_str += f"{f['resolution']} "
+                    if 'ext' in f:
+                        format_str += f"({f['ext']}) "
+                    if 'filesize' in f and f['filesize']:
+                        size_mb = f['filesize'] / (1024 * 1024)
+                        format_str += f"{size_mb:.1f}MB "
+                    formats.append(format_str.strip())
+                
+                if is_live:
+                    window.post_event("--LIVE-INFO-READY--", {"title": title, "formats": formats})
+                else:
+                    window.post_event("--LIVE-INFO-ERROR--", "この URL は生配信ではありません")
+            else:
+                window.post_event("--LIVE-INFO-ERROR--", "Invalid URL or video not found")
+    except Exception as e:
+        window.post_event("--LIVE-INFO-ERROR--", str(e))
 
 def download_video(url, format_id, save_path, window, is_single_mode=True, is_livestream=False, live_from_start=True):
     """バックグラウンドで動画をダウンロードする関数"""
@@ -113,6 +161,40 @@ def download_video(url, format_id, save_path, window, is_single_mode=True, is_li
     except Exception as e:
         current_download_process = None
         window.post_event("--DOWNLOAD-ERROR--", {"error": str(e)})
+
+def download_livestream(url, format_id, save_path, window, live_from_start=True):
+    """バックグラウンドで生配信をダウンロードする関数"""
+    try:
+        window.post_event("--LIVE-DOWNLOAD-START--", None)
+        
+        # 生配信用オプションを設定
+        ydl_opts = {
+            'format': format_id,
+            'progress_hooks': [lambda d: window.post_event("--LIVE-DOWNLOAD-PROGRESS--", d) if d['status'] == 'downloading' else None],
+            'live_from_start': live_from_start,  # 生配信の開始からダウンロードするかどうか
+            'wait_for_video': (5, 10),  # 動画がなければ5〜10秒待機
+            'concurrent_fragment_downloads': 5,  # 並列ダウンロード数
+            'retries': 10,  # 再試行回数
+        }
+        
+        # ファイルパス設定
+        ydl_opts['outtmpl'] = save_path
+            
+        # Cookieファイルが設定されている場合は追加
+        cookie_file = window.read()["cookie_list"]
+        if cookie_file and os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+        
+        # グローバル変数で現在のダウンロードプロセスを追跡できるようにする
+        global current_download_process
+        current_download_process = yt_dlp.YoutubeDL(ydl_opts)
+        current_download_process.download([url])
+        
+        current_download_process = None
+        window.post_event("--LIVE-DOWNLOAD-COMPLETE--", None)
+    except Exception as e:
+        current_download_process = None
+        window.post_event("--LIVE-DOWNLOAD-ERROR--", {"error": str(e)})
 
 def download_url_list(url_list_path, format_type, save_path, window):
     """URLリストファイルを非同期でダウンロードする関数"""
@@ -221,6 +303,21 @@ def download_playlist_simple(url, format_type, save_path, window):
 def renzoku_progress_hook(window, d):
     window.post_event("--RENZOKU-PROGRESS--", d)
 
+# 生配信用のレイアウト
+layout_live = [
+    [eg.Text("生配信ダウンロード!!",font=("Helvetica", 13,"bold"))],
+    [eg.Text("生配信URL:"),eg.InputText("", key="live_url"), eg.Button("生配信情報取得")],
+    [eg.Combo(values=[], key="live_formats", size=(40, 10,"bold"))],
+    [eg.Text("ダウンロードオプション:")],
+    [eg.Radio("配信開始からダウンロード", "live_option", key="live_from_start", default=True)],
+    [eg.Radio("現在の位置からダウンロード", "live_option", key="live_from_now")],
+    [eg.Text("保存先:"),eg.InputText(key="live_save_path"),eg.FileSaveAs("ファイル保存先")],
+    [eg.Button("生配信ダウンロード開始"), eg.Button("生配信ダウンロード停止", key="live_stop")],
+    [eg.Text("情報")],
+    [eg.Text("", key="live_title")],
+    [eg.Text("", key="live_status")]
+]
+
 layout_renzoku = [
     [eg.Text("連続ダウンロード!!",font=("Helvetica", 13,"bold"))],
     [eg.Text("URLリストファイルまたはプレイリストURL:"),eg.InputText("", key="url_input"),eg.FileBrowse("URLリスト")],
@@ -237,12 +334,7 @@ layout_main = [
     [eg.Combo(values=[], key="list", size=(40, 10,"bold"))],
     [eg.Text("保存設定",font=("Helvetica", 13,"bold"))],
     [eg.Text("保存先:"),eg.InputText(key="save_path"),eg.FileSaveAs("ファイル保存先")],
-    [eg.Checkbox("生配信?", key="is_livestream", default=False, enable_events=True)],
-    [eg.Column([
-        [eg.Radio("配信開始からダウンロード", "live_from", key="live_from_start", default=True)],
-        [eg.Radio("現在の位置からダウンロード", "live_from", key="live_from_now")],
-    ], visible=False, key="livestream_options")],
-    [eg.Button("単一ダウンロード開始"), eg.Button("配信ダウンロード停止", visible=False, key="stop_livestream")],
+    [eg.Button("単一ダウンロード開始")],
     [eg.Text("情報")],
     [eg.Text("", key="title")],
     [eg.Text("", key="status")]
@@ -257,6 +349,7 @@ layout = [
     [eg.TabGroup(
         [[
             eg.Tab("一般", layout_main),
+            eg.Tab("生配信", layout_live),
             eg.Tab("連続", layout_renzoku),
             eg.Tab("設定", layout_settings)
         ]]
@@ -277,11 +370,6 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
             if url:
                 window["status"].update("情報取得中...")
                 threading.Thread(target=fetch_video_info, args=(url, window), daemon=True).start()
-        elif event == "is_livestream":
-            # 生配信チェックボックスが切り替わった時、関連オプションの表示/非表示を切り替え
-            is_livestream = values.get("is_livestream", False)
-            window["livestream_options"].update(visible=is_livestream)
-            window["stop_livestream"].update(visible=is_livestream)
         elif event == "単一ダウンロード開始":
             url = values["url"]
             if not url:
@@ -300,30 +388,97 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
                 continue
                 
             format_id = selected_format.split(" - ")[0]
-            is_livestream = values.get("is_livestream", False)
-            
-            # 生配信ダウンロード時の追加オプション
-            if is_livestream:
-                live_from_start = values.get("live_from_start", True)
-                status_message = "配信開始からダウンロード中..." if live_from_start else "現在位置からダウンロード中..."
-                window["status"].update(status_message)
-            else:
-                window["status"].update("ダウンロード開始...")
-                live_from_start = True  # 非生配信の場合は無関係なパラメータ
+            window["status"].update("ダウンロード開始...")
                 
             threading.Thread(
                 target=download_video, 
-                args=(url, format_id, save_path, window, True, is_livestream, live_from_start), 
+                args=(url, format_id, save_path, window, True, False, True), 
                 daemon=True
             ).start()
         ####################
+        ## 生配信ダウンロード処理
+        ####################
+        elif event == "生配信情報取得":
+            url = values["live_url"]
+            if url:
+                window["live_status"].update("生配信情報取得中...")
+                threading.Thread(target=fetch_live_info, args=(url, window), daemon=True).start()
+        elif event == "生配信ダウンロード開始":
+            url = values["live_url"]
+            if not url:
+                window["live_status"].update("URLを入力してください")
+                continue
+                
+            selected_format = values["live_formats"]
+            if not selected_format:
+                window["live_status"].update("フォーマットを選択してください")
+                continue
+                
+            # ファイル保存先の確認
+            save_path = values.get("live_save_path")
+            if not save_path:
+                window["live_status"].update("保存先を選択してください")
+                continue
+                
+            format_id = selected_format.split(" - ")[0]
+            live_from_start = values.get("live_from_start", True)
+            
+            if live_from_start:
+                window["live_status"].update("配信開始からダウンロード中...")
+            else:
+                window["live_status"].update("現在位置からダウンロード中...")
+                
+            threading.Thread(
+                target=download_livestream, 
+                args=(url, format_id, save_path, window, live_from_start), 
+                daemon=True
+            ).start()
+        elif event == "live_stop":
+            if stop_download():
+                window["live_status"].update("生配信ダウンロードを停止しました")
+            else:
+                window["live_status"].update("停止するダウンロードがないか、停止処理に失敗しました")
+        elif event == "--LIVE-INFO-READY--":
+            window["live_title"].update(values["title"])
+            window["live_formats"].update(values=values["formats"])
+            window["live_status"].update("生配信情報取得完了")
+            
+            # 保存先フィールドにタイトルを含めたファイル名を自動提案
+            if values.get("title"):
+                # 不正な文字を除去してファイル名として使用可能にする
+                safe_title = "".join(c for c in values["title"] if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+                download_folder = get_download_folder()
+                suggested_path = f"{download_folder}/{safe_title}.%(ext)s"
+                window["live_save_path"].update(suggested_path)
+        elif event == "--LIVE-INFO-ERROR--":
+            window["live_title"].update("エラー")
+            window["live_status"].update(f"生配信情報取得エラー: {values}")
+        elif event == "--LIVE-DOWNLOAD-START--":
+            window["live_status"].update("生配信ダウンロード開始...")
+        elif event == "--LIVE-DOWNLOAD-PROGRESS--":
+            try:
+                progress_data = values.get(event)
+                if not progress_data and isinstance(values, dict):
+                    progress_data = values
+                    
+                if progress_data and isinstance(progress_data, dict):
+                    if 'downloaded_bytes' in progress_data:
+                        downloaded = float(progress_data['downloaded_bytes'])
+                        size_mb = downloaded / (1024 * 1024)
+                        window["live_status"].update(f"生配信ダウンロード中... {size_mb:.1f}MB")
+                    else:
+                        window["live_status"].update("生配信ダウンロード中...")
+                else:
+                    window["live_status"].update("生配信ダウンロード中...")
+            except Exception as e:
+                window["live_status"].update(f"生配信ダウンロード中... (エラー: {str(e)})")
+        elif event == "--LIVE-DOWNLOAD-COMPLETE--":
+            window["live_status"].update("生配信ダウンロード完了!")
+        elif event == "--LIVE-DOWNLOAD-ERROR--":
+            window["live_status"].update(f"生配信ダウンロードエラー: {values['error']}")
+        ####################
         ## 連続動画ダウンロード処理
         ####################
-        elif event == "stop_livestream":
-            if stop_download():
-                window["status"].update("生配信ダウンロードを停止しました")
-            else:
-                window["status"].update("停止するダウンロードがないか、停止処理に失敗しました")
         elif event == "--RENZOKU-PROGRESS--":
             try:
                 progress_data = values.get(event)
@@ -389,13 +544,7 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
         elif event == "--VIDEO-INFO-READY--":
             window["title"].update(values["title"])
             window["list"].update(values=values["formats"])
-            
-            # 生配信の場合は表示を変更
-            if values.get("is_live"):
-                window["status"].update("情報取得完了（生配信です）")
-                window["is_livestream"].update(True)  # 生配信チェックボックスを自動的にチェック
-            else:
-                window["status"].update("情報取得完了")
+            window["status"].update("情報取得完了")
                 
             # 保存先フィールドにタイトルを含めたファイル名を自動提案
             if values.get("title"):
@@ -404,6 +553,12 @@ with eg.Window("ようつべだうろだ", layout,resizable=True) as window:
                 download_folder = get_download_folder()
                 suggested_path = f"{download_folder}/{safe_title}.%(ext)s"
                 window["save_path"].update(suggested_path)
+        elif event == "--VIDEO-INFO-LIVE--":
+            # 生配信が検出された場合
+            window["title"].update(values["title"])
+            window["status"].update("この URL は生配信です。生配信タブで処理してください。")
+            # 生配信タブにURLを自動コピーして利便性向上
+            window["live_url"].update(values["url"])
         elif event == "--VIDEO-INFO-ERROR--":
             window["title"].update("エラー")
             window["status"].update(f"情報取得エラー: {values}")
