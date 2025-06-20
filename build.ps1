@@ -1,1 +1,1 @@
-pyinstaller --onefile --noconsole --name "yt-dlp-gui" main.py
+uv run pyinstaller --onefile --noconsole --name "yt-dlp-gui" main.py
