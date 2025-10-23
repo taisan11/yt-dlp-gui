@@ -1,0 +1,189 @@
+name: Build Binaries and Create Release with PyInstaller and uv
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build-windows-with-ffmpeg:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies with uv
+        run: uv sync
+
+      - name: Download FFmpeg
+        run: |
+          $url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+          $zipPath = "ffmpeg.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath ffmpeg_dir
+          $ffmpegPath = (Resolve-Path "ffmpeg_dir/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe").Path
+          echo "FFMPEG_PATH=$ffmpegPath" >> $env:GITHUB_ENV
+          Remove-Item $zipPath -Force
+
+      - name: Build with PyInstaller (with FFmpeg)
+        run: |
+          uv run pyinstaller --clean --onedir --name app-with-ffmpeg --add-binary "${{ env.FFMPEG_PATH }};." main.py
+
+      - name: Package artifact
+        run: |
+          Compress-Archive -Path dist/app-with-ffmpeg -DestinationPath app-${{ inputs.version }}-win-with-ffmpeg.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ inputs.version }}-win-with-ffmpeg
+          path: app-${{ inputs.version }}-win-with-ffmpeg.zip
+
+  build-windows-without-ffmpeg:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies with uv
+        run: uv sync
+
+      - name: Build with PyInstaller (without FFmpeg)
+        run: |
+          uv run pyinstaller --clean --onedir --name app-without-ffmpeg main.py
+
+      - name: Package artifact
+        run: |
+          Compress-Archive -Path dist/app-without-ffmpeg -DestinationPath app-${{ inputs.version }}-win-without-ffmpeg.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ inputs.version }}-win-without-ffmpeg
+          path: app-${{ inputs.version }}-win-without-ffmpeg.zip
+
+  build-linux-with-ffmpeg:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies with uv
+        run: uv sync
+
+      - name: Download FFmpeg
+        run: |
+          wget https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
+          chmod +x ffmpeg-master-latest-linux64-gpl/bin/ffmpeg
+          echo "FFMPEG_PATH=$(pwd)/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" >> $GITHUB_ENV
+          rm ffmpeg-master-latest-linux64-gpl.tar.xz
+
+      - name: Build with PyInstaller (with FFmpeg)
+        run: |
+          uv run pyinstaller --clean --onedir --name app-with-ffmpeg --add-binary "${{ env.FFMPEG_PATH }}:." main.py
+
+      - name: Package artifact
+        run: |
+          zip -r app-${{ inputs.version }}-linux-with-ffmpeg.zip dist/app-with-ffmpeg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ inputs.version }}-linux-with-ffmpeg
+          path: app-${{ inputs.version }}-linux-with-ffmpeg.zip
+
+  build-linux-without-ffmpeg:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies with uv
+        run: uv sync
+
+      - name: Build with PyInstaller (without FFmpeg)
+        run: |
+          uv run pyinstaller --clean --onedir --name app-without-ffmpeg main.py
+
+      - name: Package artifact
+        run: |
+          zip -r app-${{ inputs.version }}-linux-without-ffmpeg.zip dist/app-without-ffmpeg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ inputs.version }}-linux-without-ffmpeg
+          path: app-${{ inputs.version }}-linux-without-ffmpeg.zip
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-windows-with-ffmpeg, build-windows-without-ffmpeg, build-linux-with-ffmpeg, build-linux-without-ffmpeg]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: ${{ inputs.version }}
+          body: |
+            新バージョンだよ!!
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/app-${{ inputs.version }}-win-with-ffmpeg/app-${{ inputs.version }}-win-with-ffmpeg.zip
+            artifacts/app-${{ inputs.version }}-win-without-ffmpeg/app-${{ inputs.version }}-win-without-ffmpeg.zip
+            artifacts/app-${{ inputs.version }}-linux-with-ffmpeg/app-${{ inputs.version }}-linux-with-ffmpeg.zip
+            artifacts/app-${{ inputs.version }}-linux-without-ffmpeg/app-${{ inputs.version }}-linux-without-ffmpeg.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
