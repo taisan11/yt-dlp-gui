@@ -19,11 +19,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          enable-cache: true
 
       - name: Install dependencies with uv
         run: uv sync
@@ -62,11 +58,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          enable-cache: true
 
       - name: Install dependencies with uv
         run: uv sync
@@ -95,11 +87,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          enable-cache: true
 
       - name: Install dependencies with uv
         run: uv sync
@@ -136,11 +124,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          enable-cache: true
 
       - name: Install dependencies with uv
         run: uv sync
