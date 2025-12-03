@@ -120,10 +120,10 @@ def enable_ctrl_c_abort() -> None:
 # コールバック型
 # =========================
 
-OnStart = Callable[[Dict[str, Any]], None]
-OnProgress = Callable[[Dict[str, Any]], None]
-OnComplete = Callable[[Dict[str, Any]], None]
-OnError = Callable[[Dict[str, Any]], None]
+OnStart = Callable[[dict[str, Any]], None]
+OnProgress = Callable[[dict[str, Any]], None]
+OnComplete = Callable[[dict[str, Any]], None]
+OnError = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -219,11 +219,11 @@ class DownloadManager:
 
     # ---------- 基本的な情報取得 ----------
 
-    def fetch_info(self, url: str) -> Dict[str, Any]:
+    def fetch_info(self, url: str) -> dict[str, Any]:  # type: ignore[name-defined]
         """
-        URL のメタ情報（タイトル、ライブフラグ、利用可能フォーマット等）を取得。
+        URL のメタ情報(タイトル、ライブフラグ、利用可能フォーマット等)を取得。
         """
-        ydl_opts: Dict[str, Any] = {
+        ydl_opts = {
             "format": "bestvideo+bestaudio/best",
             "noplaylist": True,
             "quiet": True,
@@ -234,17 +234,17 @@ class DownloadManager:
 
         logger.debug("情報取得を開始: %s", url)
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False) or {}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
+                info = ydl.extract_info(url, download=False) or {}  # type: ignore[return-value]
             logger.debug("情報取得完了: title=%s is_live=%s", info.get("title"), info.get("is_live"))
-            return info
+            return info  # type: ignore[return-value]
         except Exception as e:
             logger.exception("情報取得に失敗: %s", e)
             raise
 
     # ---------- ダウンロード実行 ----------
-    def _progress_hook_factory(self, callbacks: Callbacks) -> Callable[[Dict[str, Any]], None]:
-        def _hook(d: Dict[str, Any]) -> None:
+    def _progress_hook_factory(self, callbacks: Callbacks) -> Callable[[dict[str, Any]], None]:
+        def _hook(d: dict[str, Any]) -> None:
             # 中断要求があれば例外で停止させる
             if self.abort_event.is_set():
                 raise DownloadAborted("ユーザにより中断されました")
@@ -264,8 +264,8 @@ class DownloadManager:
         is_live: bool = False,
         live_from_start: bool = True,
         metadata_mode: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        ydl_opts: Dict[str, Any] = {
+    ) -> dict[str, Any]:
+        ydl_opts = {
             "format": format_str,
             "outtmpl": outtmpl,
             "progress_hooks": [self._progress_hook_factory(callbacks)],
@@ -301,7 +301,7 @@ class DownloadManager:
         return ydl_opts
 
 
-    def _run_download(self, ydl_opts: Dict[str, Any], url: str, callbacks: Callbacks) -> None:
+    def _run_download(self, ydl_opts: dict[str, Any], url: str, callbacks: Callbacks) -> None:
         """
         yt-dlp の download 実行ラッパ。開始・完了・エラーのコールバックをハンドル。
         """
@@ -317,7 +317,7 @@ class DownloadManager:
 
         logger.info("ダウンロード開始: %s", url)
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
                 ydl.download([url])
         except DownloadAborted as e:
             logger.info("ダウンロードが中断されました: %s", e)
@@ -546,15 +546,15 @@ class DownloadManager:
 # フォーマットユーティリティ（UI で使える軽量情報）
 # =========================
 
-def build_format_list_from_info(info: Dict[str, Any]) -> List[str]:
+def build_format_list_from_info(info: dict[str, Any]) -> list[str]:
     """
-    extract_info の返却から UI 向けフォーマット一覧（文字列）を生成。
+    extract_info の返却から UI 向けフォーマット一覧(文字列)を生成。
     "id - 720p (mp4) 50.1MB" のような形。
     """
     formats = []
     for f in info.get("formats", []) or []:
         try:
-            parts: List[str] = [str(f.get("format_id", "")), "-"]
+            parts: list[str] = [str(f.get("format_id", "")), "-"]
             res = f.get("resolution") or ""
             if res:
                 parts.append(str(res))

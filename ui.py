@@ -15,8 +15,9 @@ import os
 import signal
 import sys
 import threading
+import webbrowser
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, cast
 
 import TkEasyGUI as eg
 
@@ -140,27 +141,27 @@ def worker_fetch_live_info(manager: DownloadManager, url: str, window: eg.Window
 # -----------------------------
 def _callbacks_single(window: eg.Window) -> Callbacks:
     return Callbacks(
-        on_start=lambda ctx: window.post_event("--DOWNLOAD-START--", None),
-        on_progress=lambda d: window.post_event("--DOWNLOAD-PROGRESS--", d),
-        on_complete=lambda ctx: window.post_event("--DOWNLOAD-COMPLETE--", None),
-        on_error=lambda ctx: window.post_event("--DOWNLOAD-ERROR--", {"error": ctx.get("error", "")}),
+        on_start=lambda ctx: window.post_event("--DOWNLOAD-START--", {}),
+        on_progress=lambda d: window.post_event("--DOWNLOAD-PROGRESS--", cast(Dict[Any, Any], d)),
+        on_complete=lambda ctx: window.post_event("--DOWNLOAD-COMPLETE--", {}),
+        on_error=lambda ctx: window.post_event("--DOWNLOAD-ERROR--", cast(Dict[Any, Any], {"error": ctx.get("error", "")})),
     )
 
 
 def _callbacks_live(window: eg.Window) -> Callbacks:
     return Callbacks(
-        on_start=lambda ctx: window.post_event("--LIVE-DOWNLOAD-START--", None),
-        on_progress=lambda d: window.post_event("--LIVE-DOWNLOAD-PROGRESS--", d),
-        on_complete=lambda ctx: window.post_event("--LIVE-DOWNLOAD-COMPLETE--", None),
-        on_error=lambda ctx: window.post_event("--LIVE-DOWNLOAD-ERROR--", {"error": ctx.get("error", "")}),
+        on_start=lambda ctx: window.post_event("--LIVE-DOWNLOAD-START--", {}),
+        on_progress=lambda d: window.post_event("--LIVE-DOWNLOAD-PROGRESS--", cast(Dict[Any, Any], d)),
+        on_complete=lambda ctx: window.post_event("--LIVE-DOWNLOAD-COMPLETE--", {}),
+        on_error=lambda ctx: window.post_event("--LIVE-DOWNLOAD-ERROR--", cast(Dict[Any, Any], {"error": ctx.get("error", "")})),
     )
 
 
 def _callbacks_playlist(window: eg.Window) -> Callbacks:
     return Callbacks(
-        on_progress=lambda d: window.post_event("--RENZOKU-PROGRESS--", d),
-        on_complete=lambda ctx: window.post_event("--RENZOKU-DOWNLOAD-COMPLETE--", None),
-        on_error=lambda ctx: window.post_event("--RENZOKU-DOWNLOAD-ERROR--", {"error": ctx.get("error", "")}),
+        on_progress=lambda d: window.post_event("--RENZOKU-PROGRESS--", cast(Dict[Any, Any], d)),
+        on_complete=lambda ctx: window.post_event("--RENZOKU-DOWNLOAD-COMPLETE--", {}),
+        on_error=lambda ctx: window.post_event("--RENZOKU-DOWNLOAD-ERROR--", cast(Dict[Any, Any], {"error": ctx.get("error", "")})),
     )
 
 
@@ -251,20 +252,20 @@ def worker_download_url_list(
                     total += 1
     except Exception as e:
         logger.exception("URL リスト読み込みに失敗（事前カウント）")
-        window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
+        window.post_event("--URL-LIST-FILE-ERROR--", cast(Dict[Any, Any], {"error": str(e)}))
         return
 
-    window.post_event("--URL-LIST-START--", {"total": total})
+    window.post_event("--URL-LIST-START--", cast(Dict[Any, Any], {"total": total}))
 
     def all_callbacks() -> Callbacks:
         return Callbacks(
-            on_progress=lambda d: window.post_event("--URL-LIST-PROGRESS--", d),
-            on_complete=lambda ctx: window.post_event("--URL-LIST-COMPLETE--", {"total": ctx.get("total", total)}),
-            on_error=lambda ctx: window.post_event("--URL-LIST-ERROR--", ctx),
+            on_progress=lambda d: window.post_event("--URL-LIST-PROGRESS--", cast(Dict[Any, Any], d)),
+            on_complete=lambda ctx: window.post_event("--URL-LIST-COMPLETE--", cast(Dict[Any, Any], {"total": ctx.get("total", total)})),
+            on_error=lambda ctx: window.post_event("--URL-LIST-ERROR--", cast(Dict[Any, Any], ctx)),
         )
 
     def per_item_factory(url: str) -> Callbacks:
-        return Callbacks(on_progress=lambda d: window.post_event("--RENZOKU-PROGRESS--", d))
+        return Callbacks(on_progress=lambda d: window.post_event("--RENZOKU-PROGRESS--", cast(Dict[Any, Any], d)))
 
 
         manager.download_url_list(
@@ -397,6 +398,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Text("", key="ver_python")],
         [eg.Text("", key="ver_ytdlp")],
         [eg.Text("", key="ver_tkeasygui")],
+        [eg.Button("説明書を開く")],
     ]
 
     layout = [
@@ -440,7 +442,7 @@ def main() -> None:
             def _on_sigint(signum, frame):
                 manager.stop()
                 try:
-                    window.post_event("--APP-EXIT--", None)
+                    window.post_event("--APP-EXIT--", {})
                 except Exception:
                     pass
 
@@ -760,6 +762,13 @@ def main() -> None:
 
             elif event == "--URL-LIST-FILE-ERROR--":
                 window["renzoku_status"].update(f"URLリスト読み込みエラー: {values.get('error', '')}")
+
+            # ------------- 設定 -------------
+            elif event == "説明書を開く":
+                try:
+                    webbrowser.open("https://github.com/taisan11/yt-dlp-gui")
+                except Exception as e:
+                    logger.exception("説明書を開けませんでした: %s", e)
 
 
 if __name__ == "__main__":
