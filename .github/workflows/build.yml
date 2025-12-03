@@ -41,7 +41,9 @@ jobs:
 
       - name: Download Deno
         run: |
-          $url = "https://github.com/denoland/deno/releases/download/latest/deno-x86_64-pc-windows-msvc.zip"
+          $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/denoland/deno/releases/latest"
+          $denoVersion = $latestRelease.tag_name
+          $url = "https://github.com/denoland/deno/releases/download/$denoVersion/deno-x86_64-pc-windows-msvc.zip"
           $zipPath = "deno.zip"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
           Expand-Archive -Path $zipPath -DestinationPath deno_dir
