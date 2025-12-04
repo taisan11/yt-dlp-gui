@@ -29,6 +29,7 @@ jobs:
           uv run pyinstaller --clean --onedir --name app main.py
 
       - name: Download FFmpeg
+        shell: pwsh
         run: |
           $url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
           $zipPath = "ffmpeg.zip"
@@ -40,6 +41,7 @@ jobs:
           Remove-Item ffmpeg_dir -Recurse -Force
 
       - name: Download Deno
+        shell: pwsh
         run: |
           $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/denoland/deno/releases/latest"
           $denoVersion = $latestRelease.tag_name
