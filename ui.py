@@ -74,6 +74,17 @@ def compute_versions() -> Dict[str, str]:
         versions["tkeasygui"] = getattr(eg, "__version__", "unknown")
     except Exception:
         versions["tkeasygui"] = "unknown"
+    try:
+        import subprocess
+        result = subprocess.run(["deno", "-v"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            # deno -v の出力は "deno x.x.x\n..." の形式
+            first_line = result.stdout.strip().split("\n")[0]
+            versions["deno"] = first_line.replace("deno", "").strip()
+        else:
+            versions["deno"] = "not found"
+    except Exception:
+        versions["deno"] = "not found"
     return versions
 
 
@@ -398,6 +409,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Text("", key="ver_python")],
         [eg.Text("", key="ver_ytdlp")],
         [eg.Text("", key="ver_tkeasygui")],
+        [eg.Text("", key="ver_deno")],
         [eg.Button("説明書を開く")],
     ]
 
@@ -434,6 +446,7 @@ def main() -> None:
             window["ver_python"].update(f"Python: {vers.get('python', '')}")
             window["ver_ytdlp"].update(f"yt-dlp: {vers.get('yt_dlp', '')}")
             window["ver_tkeasygui"].update(f"TkEasyGUI: {vers.get('tkeasygui', '')}")
+            window["ver_deno"].update(f"Deno: {vers.get('deno', '')}")
         except Exception:
             pass
 
