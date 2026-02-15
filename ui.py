@@ -88,6 +88,44 @@ def compute_versions() -> Dict[str, str]:
     return versions
 
 
+def get_loaded_plugins() -> list[str]:
+    """yt-dlpで読み込まれているプラグインのリストを取得"""
+    plugins: list[str] = []
+    try:
+        import yt_dlp.plugins
+        # プラグインタイプ（extractor, postprocessor, etc.）を探索
+        plugin_types = ["extractor", "postprocessor"]
+        for plugin_type in plugin_types:
+            try:
+                plugin_module = getattr(yt_dlp.plugins, plugin_type, None)
+                if plugin_module and hasattr(plugin_module, "__path__"):
+                    # 名前空間パッケージからモジュールを列挙
+                    import pkgutil
+                    for importer, modname, ispkg in pkgutil.iter_modules(plugin_module.__path__):
+                        plugins.append(f"{plugin_type}.{modname}")
+            except Exception:
+                pass
+        
+        # 別の方法: _load_plugins関数が存在する場合
+        if not plugins:
+            try:
+                from yt_dlp.plugins import load_plugins
+                load_plugins()
+                # ロード後に extractor/postprocessor のプラグインを確認
+                import sys
+                for mod_name in sys.modules:
+                    if mod_name.startswith("yt_dlp_plugins."):
+                        plugin_name = mod_name.replace("yt_dlp_plugins.", "")
+                        if plugin_name not in plugins:
+                            plugins.append(plugin_name)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"プラグイン取得エラー: {e}")
+    
+    return sorted(plugins) if plugins else ["なし"]
+
+
 # -----------------------------
 # ユーティリティ
 # -----------------------------
@@ -410,6 +448,8 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Text("", key="ver_ytdlp")],
         [eg.Text("", key="ver_tkeasygui")],
         [eg.Text("", key="ver_deno")],
+        [eg.Text("yt-dlpプラグイン", font=("Helvetica", 13, "bold"))],
+        [eg.Multiline("", key="plugins_list", size=(60, 8), disabled=True)],
         [eg.Button("説明書を開く")],
     ]
 
@@ -449,6 +489,14 @@ def main() -> None:
             window["ver_deno"].update(f"Deno: {vers.get('deno', '')}")
         except Exception:
             pass
+        
+        # プラグイン表示
+        try:
+            plugins = get_loaded_plugins()
+            plugins_text = "\n".join(plugins)
+            window["plugins_list"].update(plugins_text)
+        except Exception as e:
+            logger.debug(f"プラグイン表示エラー: {e}")
 
         # SIGINT handler: stop and request app exit
         try:

@@ -271,6 +271,9 @@ class DownloadManager:
             "progress_hooks": [self._progress_hook_factory(callbacks)],
             # 安定性向上の推奨オプション
             "retries": 10,
+            # 重複ファイル名の処理: _1, _2, ... と自動的にカウントアップ
+            "overwrites": False,
+            "nooverwrites": True,
         }
 
         # ライブ向け設定
