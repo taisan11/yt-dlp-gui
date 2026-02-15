@@ -26,7 +26,7 @@ jobs:
 
       - name: Build with PyInstaller (without FFmpeg)
         run: |
-          uv run pyinstaller --clean --onedir --name app main.py
+          uv run pyinstaller --noconsole --clean --onedir --name app main.py
 
       - name: Download FFmpeg
         shell: pwsh
@@ -61,12 +61,12 @@ jobs:
           Remove-Item dist/app-base/ffmpeg.exe -Force
           Remove-Item dist/app-base/deno.exe -Force
           Compress-Archive -Path dist/app-base -DestinationPath app-${{ inputs.version }}-win.zip
-          
+
           # with FFmpeg
           Copy-Item -Path dist/app -Destination dist/app-with-ffmpeg -Recurse
           Remove-Item dist/app-with-ffmpeg/deno.exe -Force
           Compress-Archive -Path dist/app-with-ffmpeg -DestinationPath app-${{ inputs.version }}-win-with-ffmpeg.zip
-          
+
           # with FFmpeg with Deno
           Compress-Archive -Path dist/app -DestinationPath app-${{ inputs.version }}-win-with-ffmpeg-with-deno.zip
 
@@ -121,7 +121,7 @@ jobs:
           cp -r dist/app dist/app-base
           rm dist/app-base/ffmpeg
           zip -r app-${{ inputs.version }}-linux.zip dist/app-base
-          
+
           # with FFmpeg
           zip -r app-${{ inputs.version }}-linux-with-ffmpeg.zip dist/app
 
