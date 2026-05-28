@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import os
 import signal
@@ -161,6 +162,81 @@ def _to_outtmpl(path_or_tmpl: Path | str) -> str:
     return str(path_or_tmpl)
 
 
+def _normalize_output_format(output_format: Optional[str]) -> Optional[str]:
+    normalized = (output_format or "").strip().lower()
+    if not normalized or normalized in {"auto", "original", "source"}:
+        return None
+    return normalized
+
+
+def _read_urls_from_csv(file_path: Path, csv_column: Optional[str]) -> List[str]:
+    column_spec = (csv_column or "").strip()
+    urls: List[str] = []
+
+    with file_path.open("r", encoding="utf-8-sig", newline="") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample) if sample else csv.excel
+        except csv.Error:
+            dialect = csv.excel
+        try:
+            has_header = csv.Sniffer().has_header(sample) if sample else False
+        except csv.Error:
+            has_header = False
+
+        if not column_spec:
+            reader = csv.reader(f, dialect)
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                if row and row[0].strip():
+                    urls.append(row[0].strip())
+            return urls
+
+        if column_spec.isdigit():
+            column_index = int(column_spec) - 1
+            if column_index < 0:
+                raise ValueError("CSV列は1以上で指定してください")
+
+            reader = csv.reader(f, dialect)
+            if has_header:
+                next(reader, None)
+            for row_number, row in enumerate(reader, 1):
+                if column_index >= len(row):
+                    logger.debug("CSV列 %s が行 %d にありません", column_spec, row_number)
+                    continue
+                value = row[column_index].strip()
+                if value:
+                    urls.append(value)
+            return urls
+
+        reader = csv.DictReader(f, dialect=dialect)
+        if not reader.fieldnames:
+            raise ValueError("CSVヘッダーが見つかりませんでした")
+        if column_spec not in reader.fieldnames:
+            raise ValueError(f"CSV列 '{column_spec}' が見つかりませんでした")
+
+        for row in reader:
+            value = (row.get(column_spec) or "").strip()
+            if value:
+                urls.append(value)
+        return urls
+
+
+def _read_urls_from_file(file_path: Path, csv_column: Optional[str]) -> List[str]:
+    if file_path.suffix.lower() == ".csv":
+        return _read_urls_from_csv(file_path, csv_column)
+
+    urls: List[str] = []
+    with file_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            value = line.strip()
+            if value:
+                urls.append(value)
+    return urls
+
+
 # =========================
 # ダウンロードマネージャ
 # =========================
@@ -264,6 +340,8 @@ class DownloadManager:
         is_live: bool = False,
         live_from_start: bool = True,
         metadata_mode: Optional[str] = None,
+        output_format: Optional[str] = None,
+        audio_only: bool = False,
     ) -> dict[str, Any]:
         ydl_opts = {
             "format": format_str,
@@ -300,6 +378,19 @@ class DownloadManager:
         elif mode == "separate":
             ydl_opts["writeinfojson"] = True
         # "none" は何もしない
+
+        batch_output_format = _normalize_output_format(output_format)
+        if batch_output_format:
+            if audio_only:
+                ydl_opts["postprocessors"] = [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": batch_output_format,
+                        "preferredquality": "0",
+                    }
+                ]
+            else:
+                ydl_opts["merge_output_format"] = batch_output_format
 
         return ydl_opts
 
@@ -432,6 +523,9 @@ class DownloadManager:
         callbacks: Optional[Callbacks] = None,
         per_item_callbacks_factory: Optional[Callable[[str], Callbacks]] = None,
         metadata_mode: Optional[str] = None,
+        csv_column: Optional[str] = None,
+        output_format: Optional[str] = None,
+        audio_only: bool = False,
     ) -> None:
         """
         URL リストファイルを読み取り、1 行ずつダウンロードする。
@@ -450,12 +544,7 @@ class DownloadManager:
                 logger.exception("on_start コールバック内で例外")
 
         try:
-            urls: List[str] = []
-            with file_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    u = line.strip()
-                    if u:
-                        urls.append(u)
+            urls = _read_urls_from_file(file_path, csv_column)
         except Exception as e:
             logger.exception("URL リストの読み込みに失敗: %s", e)
             if callbacks.on_error:
@@ -467,6 +556,18 @@ class DownloadManager:
 
         total = len(urls)
         logger.info("連続ダウンロード開始: %d 件", total)
+
+        if callbacks.on_start:
+            try:
+                callbacks.on_start(
+                    {
+                        "url_list_path": str(file_path),
+                        "total": total,
+                        "csv_column": csv_column or "",
+                    }
+                )
+            except Exception:
+                logger.exception("on_start コールバック内で例外")
 
         for idx, url in enumerate(urls, 1):
             if self.abort_event.is_set():
@@ -491,6 +592,8 @@ class DownloadManager:
                     callbacks=item_callbacks,
                     is_live=False,
                     metadata_mode=metadata_mode,
+                    output_format=output_format,
+                    audio_only=audio_only,
                 )
                 self._run_download(ydl_opts, url, item_callbacks)
             except DownloadAborted:
@@ -521,6 +624,8 @@ class DownloadManager:
         save_dir: str | Path,
         callbacks: Optional[Callbacks] = None,
         metadata_mode: Optional[str] = None,
+        output_format: Optional[str] = None,
+        audio_only: bool = False,
     ) -> None:
         """
         単純なプレイリスト/チャンネル URL のダウンロード。
@@ -541,6 +646,8 @@ class DownloadManager:
             callbacks=callbacks,
             is_live=False,
             metadata_mode=metadata_mode,
+            output_format=output_format,
+            audio_only=audio_only,
         )
         self._run_download(ydl_opts, url, callbacks)
 

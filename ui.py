@@ -144,6 +144,41 @@ def parse_selected_format_id(selected: str) -> str:
     return (selected or "").split(" - ")[0].strip()
 
 
+BATCH_OUTPUT_FORMATS = [
+    "auto",
+    "mp4",
+    "mkv",
+    "webm",
+    "mp3",
+    "m4a",
+    "aac",
+    "alac",
+    "wav",
+    "opus",
+    "flac",
+]
+
+VIDEO_OUTPUT_FORMATS = {"mp4", "mkv", "webm"}
+AUDIO_OUTPUT_FORMATS = {"mp3", "m4a", "aac", "alac", "wav", "opus", "flac"}
+
+
+def build_batch_format_expr(audio_only: bool) -> str:
+    return "bestaudio/best" if audio_only else "bestvideo+bestaudio/best"
+
+
+def validate_batch_output_format(output_format: str, audio_only: bool) -> Optional[str]:
+    value = (output_format or "").strip().lower()
+    if not value or value in {"auto", "original", "source"}:
+        return None
+    if audio_only:
+        if value not in AUDIO_OUTPUT_FORMATS:
+            raise ValueError("音声の出力形式は mp3 / m4a / opus / flac から選択してください")
+    else:
+        if value not in VIDEO_OUTPUT_FORMATS:
+            raise ValueError("動画の出力形式は mp4 / mkv / webm から選択してください")
+    return value
+
+
 # -----------------------------
 # スレッドワーカ（情報取得）
 # -----------------------------
@@ -278,94 +313,67 @@ def worker_download_single(
 
 
 def worker_download_url_list(
-
     manager: DownloadManager,
-
     url_list_path: str,
-
     format_expr: str,
-
     save_dir: str,
-
     metadata_mode: Optional[str],
+    csv_column: str,
+    output_format: str,
+    audio_only: bool,
     window: eg.Window,
-
 ) -> None:
-
-    # 事前カウント
-    total = 0
-    try:
-        with open(url_list_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    total += 1
-    except Exception as e:
-        logger.exception("URL リスト読み込みに失敗（事前カウント）")
-        window.post_event("--URL-LIST-FILE-ERROR--", cast(Dict[Any, Any], {"error": str(e)}))
-        return
-
-    window.post_event("--URL-LIST-START--", cast(Dict[Any, Any], {"total": total}))
-
     def all_callbacks() -> Callbacks:
         return Callbacks(
+            on_start=lambda ctx: window.post_event("--URL-LIST-START--", cast(Dict[Any, Any], ctx)),
             on_progress=lambda d: window.post_event("--URL-LIST-PROGRESS--", cast(Dict[Any, Any], d)),
-            on_complete=lambda ctx: window.post_event("--URL-LIST-COMPLETE--", cast(Dict[Any, Any], {"total": ctx.get("total", total)})),
+            on_complete=lambda ctx: window.post_event("--URL-LIST-COMPLETE--", cast(Dict[Any, Any], ctx)),
             on_error=lambda ctx: window.post_event("--URL-LIST-ERROR--", cast(Dict[Any, Any], ctx)),
         )
 
     def per_item_factory(url: str) -> Callbacks:
         return Callbacks(on_progress=lambda d: window.post_event("--RENZOKU-PROGRESS--", cast(Dict[Any, Any], d)))
 
-
+    try:
         manager.download_url_list(
-
             url_list_path=url_list_path,
-
             format_expr=format_expr,
-
             save_dir=save_dir,
-
             callbacks=all_callbacks(),
-
             per_item_callbacks_factory=per_item_factory,
-
             metadata_mode=metadata_mode,
+            csv_column=csv_column or None,
+            output_format=output_format or None,
+            audio_only=audio_only,
         )
-        try:
-            manager.download_url_list(
-                url_list_path=url_list_path,
-                format_expr=format_expr,
-                save_dir=save_dir,
-                callbacks=all_callbacks(),
-                per_item_callbacks_factory=per_item_factory,
-                metadata_mode=metadata_mode,
-            )
-        except DownloadAborted:
-            logger.info("URL リストの処理は中断されました")
-        except Exception as e:
-            logger.exception("URL リスト処理中に失敗")
-            window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
-
+    except DownloadAborted:
+        logger.info("URL リストの処理は中断されました")
+    except Exception as e:
+        logger.exception("URL リスト処理中に失敗")
+        window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
 
 
 def worker_download_playlist(
-
     manager: DownloadManager,
-
     url: str,
-
     format_expr: str,
-
     save_dir: str,
-
     metadata_mode: Optional[str],
+    output_format: str,
+    audio_only: bool,
     window: eg.Window,
-
 ) -> None:
-
     callbacks = _callbacks_playlist(window)
     try:
-        manager.download_playlist_simple(url=url, format_expr=format_expr, save_dir=save_dir, callbacks=callbacks)
+        manager.download_playlist_simple(
+            url=url,
+            format_expr=format_expr,
+            save_dir=save_dir,
+            callbacks=callbacks,
+            metadata_mode=metadata_mode,
+            output_format=output_format or None,
+            audio_only=audio_only,
+        )
     except DownloadAborted:
         logger.info("プレイリスト処理は中断されました")
     except Exception as e:
@@ -379,6 +387,8 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
     cookie_init = settings.get("cookie_list", "")
 
     renzoku_folder_init = settings.get("renzoku_folder", "")
+    renzoku_csv_column_init = settings.get("renzoku_csv_column", "")
+    renzoku_output_format_init = settings.get("renzoku_output_format", "auto")
 
     save_path_init = settings.get("save_path", "")
 
@@ -408,7 +418,9 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
     layout_renzoku = [
         [eg.Text("連続ダウンロード!!", font=("Helvetica", 13, "bold"))],
         [eg.Text("URLリストファイルまたはプレイリストURL:"), eg.InputText("", key="url_input"), eg.FileBrowse("URLリスト")],
+        [eg.Text("CSV列指定:"), eg.InputText(renzoku_csv_column_init, key="renzoku_csv_column"), eg.Text("見出し名または1始まり番号")],
         [eg.Text("出力形式:"), eg.Radio("video", "AV", default=True, key="renzoku_video"), eg.Radio("audio", "AV", key="renzoku_audio")],
+        [eg.Combo(values=BATCH_OUTPUT_FORMATS, default_value=renzoku_output_format_init if renzoku_output_format_init in BATCH_OUTPUT_FORMATS else "auto", key="renzoku_output_format", size=(18, 8))],
         [eg.Text("保存フォルダ:"), eg.InputText(renzoku_folder_init, key="renzoku_folder"), eg.FolderBrowse("フォルダ選択")],
         [eg.Button("連続ダウンロード開始"), eg.Button("連続ダウンロード停止", key="renzoku_stop")],
         [eg.Text("", key="renzoku_status")],
@@ -524,6 +536,8 @@ def main() -> None:
                         "cookie_list": values.get("cookie_list", "") or "",
 
                         "renzoku_folder": values.get("renzoku_folder", "") or "",
+                        "renzoku_csv_column": values.get("renzoku_csv_column", "") or "",
+                        "renzoku_output_format": values.get("renzoku_output_format", "") or "auto",
 
                         "save_path": values.get("save_path", "") or "",
 
@@ -752,14 +766,42 @@ def main() -> None:
                     continue
 
                 save_folder = values.get("renzoku_folder") or str(get_default_download_folder())
-                format_type = "bestaudio" if values.get("renzoku_audio") else "bestvideo+bestaudio/best"
+                audio_only = bool(values.get("renzoku_audio"))
+                format_type = build_batch_format_expr(audio_only)
+                csv_column = (values.get("renzoku_csv_column") or "").strip()
+                try:
+                    output_format = validate_batch_output_format(values.get("renzoku_output_format") or "", audio_only)
+                except ValueError as e:
+                    window["renzoku_status"].update(str(e))
+                    continue
 
                 if os.path.exists(url_input):
                     window["renzoku_status"].update("URLリスト読み込み中...")
-                    run_in_thread(worker_download_url_list, manager, url_input, format_type, save_folder, mode, window)
+                    run_in_thread(
+                        worker_download_url_list,
+                        manager,
+                        url_input,
+                        format_type,
+                        save_folder,
+                        mode,
+                        csv_column,
+                        output_format or "",
+                        audio_only,
+                        window,
+                    )
                 else:
                     window["renzoku_status"].update("ダウンロード開始...")
-                    run_in_thread(worker_download_playlist, manager, url_input, format_type, save_folder, mode, window)
+                    run_in_thread(
+                        worker_download_playlist,
+                        manager,
+                        url_input,
+                        format_type,
+                        save_folder,
+                        mode,
+                        output_format or "",
+                        audio_only,
+                        window,
+                    )
 
             elif event in ("連続ダウンロード停止", "renzoku_stop"):
                 manager.stop()
