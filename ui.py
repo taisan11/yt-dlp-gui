@@ -34,6 +34,7 @@ logger = setup_logging()
 
 # 設定ファイル
 SETTINGS_PATH = Path("settings.json")
+DEFAULT_FILENAME_TEMPLATE = "%(title)s.%(ext)s"
 
 
 # -----------------------------
@@ -348,6 +349,7 @@ def worker_download_url_list(
         )
     except DownloadAborted:
         logger.info("URL リストの処理は中断されました")
+        window.post_event("--URL-LIST-ABORTED--", {})
     except Exception as e:
         logger.exception("URL リスト処理中に失敗")
         window.post_event("--URL-LIST-FILE-ERROR--", {"error": str(e)})
@@ -394,7 +396,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
 
     live_save_path_init = settings.get("live_save_path", "")
 
-    filename_template_init = settings.get("filename_template", "%(title)s.%(ext)s")
+    filename_template_init = settings.get("filename_template") or DEFAULT_FILENAME_TEMPLATE
 
     metadata_mode_init = settings.get("metadata_mode", "embed")
 
@@ -409,7 +411,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Radio("配信開始からダウンロード", "live_option", key="live_from_start", default=True)],
         [eg.Radio("現在の位置からダウンロード", "live_option", key="live_from_now")],
         [eg.Text("保存先:"), eg.InputText(live_save_path_init, key="live_save_path"), eg.FileSaveAs("ファイル保存先")],
-        [eg.Button("生配信ダウンロード開始"), eg.Button("生配信ダウンロード停止", key="live_stop")],
+        [eg.Button("生配信ダウンロード開始", key="live_start"), eg.Button("生配信ダウンロード停止", key="live_stop")],
         [eg.Text("情報")],
         [eg.Text("", key="live_title")],
         [eg.Text("", key="live_status")],
@@ -422,7 +424,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Text("出力形式:"), eg.Radio("video", "AV", default=True, key="renzoku_video"), eg.Radio("audio", "AV", key="renzoku_audio")],
         [eg.Combo(values=BATCH_OUTPUT_FORMATS, default_value=renzoku_output_format_init if renzoku_output_format_init in BATCH_OUTPUT_FORMATS else "auto", key="renzoku_output_format", size=(18, 8))],
         [eg.Text("保存フォルダ:"), eg.InputText(renzoku_folder_init, key="renzoku_folder"), eg.FolderBrowse("フォルダ選択")],
-        [eg.Button("連続ダウンロード開始"), eg.Button("連続ダウンロード停止", key="renzoku_stop")],
+        [eg.Button("連続ダウンロード開始", key="renzoku_start"), eg.Button("連続ダウンロード停止", key="renzoku_stop")],
         [eg.Text("", key="renzoku_status")],
     ]
 
@@ -433,7 +435,7 @@ def build_layout(settings: Dict[str, Any]) -> list[list[Any]]:
         [eg.Combo(values=["bestvideo[ext=webm]+bestaudio[ext=webm]/bestvideo+bestaudio/best", "bestaudio[ext=webm]"], default_value="bestvideo[ext=webm]+bestaudio[ext=webm]/bestvideo+bestaudio/best",key="list", size=(40, 10))],
         [eg.Text("保存設定", font=("Helvetica", 13, "bold"))],
         [eg.Text("保存先:"), eg.InputText(default_text=str(get_default_download_folder()), key="save_path"), eg.FolderBrowse("ファイル保存先")],
-        [eg.Button("単一ダウンロード開始")],
+        [eg.Button("単一ダウンロード開始", key="single_start")],
         [eg.Text("情報")],
         [eg.Text("", key="title")],
         [eg.Text("", key="status")],
@@ -544,7 +546,7 @@ def main() -> None:
 
                         "live_save_path": values.get("live_save_path", "") or "",
 
-                        "filename_template": values.get("filename_template", "") or "",
+                        "filename_template": values.get("filename_template", "") or DEFAULT_FILENAME_TEMPLATE,
 
                         "metadata_mode": ("embed" if values.get("metadata_embed") else ("separate" if values.get("metadata_separate") else ("none" if values.get("metadata_none") else "embed"))),
                     }
@@ -572,7 +574,7 @@ def main() -> None:
                 window["status"].update("情報取得中...")
                 run_in_thread(worker_fetch_video_info, manager, url, window)
 
-            elif event == "単一ダウンロード開始":
+            elif event in ("単一ダウンロード開始", "single_start"):
                 url = (values.get("url") or "").strip()
                 if not url:
                     window["status"].update("URLを入力してください")
@@ -591,12 +593,13 @@ def main() -> None:
 
                     continue
 
-                tmpl = values.get("filename_template") or settings.get("filename_template", "%(title)s.%(ext)s")
+                tmpl = values.get("filename_template") or settings.get("filename_template") or DEFAULT_FILENAME_TEMPLATE
                 outtmpl = str(Path(save_folder) / tmpl)
 
                 format_id = parse_selected_format_id(selected_format)
 
                 window["status"].update("ダウンロード開始...")
+                window["single_start"].update(disabled=True)
 
                 run_in_thread(
 
@@ -663,9 +666,11 @@ def main() -> None:
 
             elif event == "--DOWNLOAD-COMPLETE--":
                 window["status"].update("ダウンロード完了!")
+                window["single_start"].update(disabled=False)
 
             elif event == "--DOWNLOAD-ERROR--":
                 window["status"].update(f"ダウンロードエラー: {values.get('error', '')}")
+                window["single_start"].update(disabled=False)
 
             # ------------- 生配信 -------------
             elif event == "生配信情報取得":
@@ -676,7 +681,7 @@ def main() -> None:
                 window["live_status"].update("生配信情報取得中...")
                 run_in_thread(worker_fetch_live_info, manager, url, window)
 
-            elif event == "生配信ダウンロード開始":
+            elif event in ("生配信ダウンロード開始", "live_start"):
                 url = (values.get("live_url") or "").strip()
                 if not url:
                     window["live_status"].update("URLを入力してください")
@@ -700,6 +705,7 @@ def main() -> None:
                 else:
                     window["live_status"].update("現在位置からダウンロード中...")
 
+                window["live_start"].update(disabled=True)
 
                 run_in_thread(
 
@@ -734,7 +740,7 @@ def main() -> None:
                 title = values.get("title")
 
                 if title:
-                    tmpl = settings.get("filename_template", "%(title)s.%(ext)s")
+                    tmpl = values.get("filename_template") or settings.get("filename_template") or DEFAULT_FILENAME_TEMPLATE
                     suggested = str(get_default_download_folder() / tmpl)
                     window["live_save_path"].update(suggested)
 
@@ -754,12 +760,14 @@ def main() -> None:
 
             elif event == "--LIVE-DOWNLOAD-COMPLETE--":
                 window["live_status"].update("生配信ダウンロード完了!")
+                window["live_start"].update(disabled=False)
 
             elif event == "--LIVE-DOWNLOAD-ERROR--":
                 window["live_status"].update(f"生配信ダウンロードエラー: {values.get('error', '')}")
+                window["live_start"].update(disabled=False)
 
             # ------------- 連続ダウンロード（URL リスト / プレイリスト） -------------
-            elif event == "連続ダウンロード開始":
+            elif event in ("連続ダウンロード開始", "renzoku_start"):
                 url_input = (values.get("url_input") or "").strip()
                 if not url_input:
                     window["renzoku_status"].update("URLリストファイルまたはプレイリストURLを入力してください")
@@ -777,6 +785,7 @@ def main() -> None:
 
                 if os.path.exists(url_input):
                     window["renzoku_status"].update("URLリスト読み込み中...")
+                    window["renzoku_start"].update(disabled=True)
                     run_in_thread(
                         worker_download_url_list,
                         manager,
@@ -791,6 +800,7 @@ def main() -> None:
                     )
                 else:
                     window["renzoku_status"].update("ダウンロード開始...")
+                    window["renzoku_start"].update(disabled=True)
                     run_in_thread(
                         worker_download_playlist,
                         manager,
@@ -833,9 +843,11 @@ def main() -> None:
 
             elif event == "--RENZOKU-DOWNLOAD-COMPLETE--":
                 window["renzoku_status"].update("ダウンロード完了!")
+                window["renzoku_start"].update(disabled=False)
 
             elif event == "--RENZOKU-DOWNLOAD-ERROR--":
                 window["renzoku_status"].update(f"ダウンロードエラー: {values.get('error', '')}")
+                window["renzoku_start"].update(disabled=False)
 
             elif event == "--URL-LIST-START--":
                 total = values.get("total", 0)
@@ -853,6 +865,7 @@ def main() -> None:
             elif event == "--URL-LIST-COMPLETE--":
                 total = values.get("total", 0)
                 window["renzoku_status"].update(f"連続ダウンロード完了 ({total}件)")
+                window["renzoku_start"].update(disabled=False)
 
             elif event == "--URL-LIST-ERROR--":
                 cur = values.get("current")
@@ -862,9 +875,15 @@ def main() -> None:
                     window["renzoku_status"].update(f"エラー ({cur}/{total}): {err}")
                 else:
                     window["renzoku_status"].update(f"エラー: {err}")
+                window["renzoku_start"].update(disabled=False)
 
             elif event == "--URL-LIST-FILE-ERROR--":
                 window["renzoku_status"].update(f"URLリスト読み込みエラー: {values.get('error', '')}")
+                window["renzoku_start"].update(disabled=False)
+
+            elif event == "--URL-LIST-ABORTED--":
+                window["renzoku_status"].update("連続ダウンロードを停止しました")
+                window["renzoku_start"].update(disabled=False)
 
             # ------------- 設定 -------------
             elif event == "説明書を開く":

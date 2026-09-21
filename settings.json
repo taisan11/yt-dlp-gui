@@ -5,6 +5,6 @@
   "renzoku_output_format": "wav",
   "save_path": "C:\\Users\\kappy\\Downloads",
   "live_save_path": "",
-  "filename_template": "",
+  "filename_template": "%(title)s.%(ext)s",
   "metadata_mode": "embed"
 }
